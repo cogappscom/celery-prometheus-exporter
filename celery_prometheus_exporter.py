@@ -15,6 +15,7 @@ import json
 import os
 from celery.utils.objects import FallbackContext
 import amqp.exceptions
+import ast
 
 __VERSION__ = (1, 2, 0, 'final', 0)
 
@@ -22,6 +23,36 @@ __VERSION__ = (1, 2, 0, 'final', 0)
 def decode_buckets(buckets_list):
     return [float(x) for x in buckets_list.split(',')]
 
+
+def get_event_name(args, event_name):
+    # Sub the event name if it's class based
+    if event_name.split('.')[-1].endswith('Events'):
+        args_str = args[1:-1]
+        args_list = args_str.replace(' ', '').split(',', 8)
+        try:
+            try:
+                is_dict = type(ast.literal_eval(args_list[-1]))
+            except ValueError:
+                event_name = args_list[-2]
+            else:
+                if is_dict is dict or is_dict == list:
+                    event_name = args_list[-2]
+                else:
+                    event_name = args_list[-1]
+        except (ValueError, SyntaxError):
+            try:
+                is_dict = type(ast.literal_eval(args_list[-2]))
+                
+                if is_dict is dict or is_dict == list:
+                    event_name = args_list[-3]
+                else:
+                    event_name = args_list[-2]
+            except (ValueError, SyntaxError):
+                event_name = args_list[-3]
+        except Exception as e:
+            raise(e)
+
+    return event_name
 
 def get_histogram_buckets_from_evn(env_name):
     if env_name in os.environ:
@@ -73,7 +104,6 @@ class MonitorThread(threading.Thread):
     def __init__(self, app=None, *args, **kwargs):
         self._app = app
         self.log = logging.getLogger('monitor')
-        self.log.info('Setting up monitor...')
         max_tasks_in_memory = kwargs.pop('max_tasks_in_memory',
                                          DEFAULT_MAX_TASKS_IN_MEMORY)
         self._state = self._app.events.State(
@@ -128,9 +158,10 @@ class MonitorThread(threading.Thread):
         try:
             # remove event from list of in-progress tasks
             event = self._state.tasks.pop(evt['uuid'])
-            TASKS_NAME.labels(state=state, name=event.name).inc()
+            event_name = get_event_name(event.args, event.name)
+            TASKS_NAME.labels(state=state, name=event_name).inc()
             if 'runtime' in evt:
-                TASKS_RUNTIME.labels(name=event.name) \
+                TASKS_RUNTIME.labels(name=event_name) \
                              .observe(evt['runtime'])
         except (KeyError, AttributeError):  # pragma: no cover
             pass
@@ -144,8 +175,9 @@ class MonitorThread(threading.Thread):
 
         # count unready tasks by state and name
         cnt = collections.Counter(
-            (t.state, t.name) for t in self._state.tasks.values() if t.name)
+            (t.state, get_event_name(t.args, t.name)) for t in self._state.tasks.values() if t.args and t.name)
         self._known_states_names.update(cnt.elements())
+        
         for task_state in self._known_states_names:
             TASKS_NAME.labels(
                 state=task_state[0],
@@ -155,17 +187,14 @@ class MonitorThread(threading.Thread):
     def _monitor(self):  # pragma: no cover
         while True:
             try:
-                self.log.info('Connecting to broker...')
                 with self._app.connection() as conn:
                     recv = self._app.events.Receiver(conn, handlers={
                         '*': self._process_event,
                     })
-                    setup_metrics(self._app)
                     recv.capture(limit=None, timeout=None, wakeup=True)
                     self.log.info("Connected to broker")
             except Exception:
                 self.log.exception("Queue connection failed")
-                setup_metrics(self._app)
                 time.sleep(5)
 
 
@@ -211,7 +240,7 @@ class EnableEventsThread(threading.Thread):
         self._app.control.enable_events()
 
 
-class QueueLengthMonitoringThread(threading.Thread):
+class QueueLenghtMonitoringThread(threading.Thread):
     periodicity_seconds = 30
 
     def __init__(self, app, queue_list):
@@ -223,7 +252,7 @@ class QueueLengthMonitoringThread(threading.Thread):
         if isinstance(self.connection, FallbackContext):
             self.connection = self.connection.fallback()
 
-        super(QueueLengthMonitoringThread, self).__init__()
+        super(QueueLenghtMonitoringThread, self).__init__()
 
     def measure_queues_length(self):
         for queue in self.queue_list:
@@ -249,7 +278,6 @@ def setup_metrics(app):
     even before the first event is received, data can be exposed.
     """
     WORKERS.set(0)
-    logging.info('Setting up metrics, trying to connect to broker...')
     try:
         registered_tasks = app.control.inspect().registered_tasks().values()
     except Exception:  # pragma: no cover
@@ -336,7 +364,6 @@ def main():  # pragma: no cover
         os.environ['TZ'] = opts.tz
         time.tzset()
 
-    logging.info('Setting up celery for {}'.format(opts.broker))
     app = celery.Celery(broker=opts.broker)
 
     if opts.transport_options:
@@ -348,8 +375,6 @@ def main():  # pragma: no cover
             sys.exit(1)
         else:
             app.conf.broker_transport_options = transport_options
-
-    setup_metrics(app)
 
     t = MonitorThread(app=app, max_tasks_in_memory=opts.max_tasks_in_memory)
     t.daemon = True
@@ -365,7 +390,7 @@ def main():  # pragma: no cover
         else:
             queue_list = opts.queue_list
 
-        q = QueueLengthMonitoringThread(app=app, queue_list=queue_list)
+        q = QueueLenghtMonitoringThread(app=app, queue_list=queue_list)
 
         q.daemon = True
         q.start()
