@@ -29,28 +29,7 @@ def get_event_name(args, event_name):
     if event_name.split('.')[-1].endswith('Events'):
         args_str = args[1:-1]
         args_list = args_str.replace(' ', '').split(',', 8)
-        try:
-            try:
-                is_dict = type(ast.literal_eval(args_list[-1]))
-            except ValueError:
-                event_name = args_list[-2]
-            else:
-                if is_dict is dict or is_dict == list:
-                    event_name = args_list[-2]
-                else:
-                    event_name = args_list[-1]
-        except (ValueError, SyntaxError):
-            try:
-                is_dict = type(ast.literal_eval(args_list[-2]))
-                
-                if is_dict is dict or is_dict == list:
-                    event_name = args_list[-3]
-                else:
-                    event_name = args_list[-2]
-            except (ValueError, SyntaxError):
-                event_name = args_list[-3]
-        except Exception as e:
-            raise(e)
+	event_name = args_list[0]	
 
     return event_name
 
