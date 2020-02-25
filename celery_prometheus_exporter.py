@@ -29,7 +29,7 @@ def get_event_name(args, event_name):
     if event_name.split('.')[-1].endswith('Events'):
         args_str = args[1:-1]
         args_list = args_str.replace(' ', '').split(',', 8)
-	event_name = args_list[0]	
+        event_name = args_list[0]
 
     return event_name
 
