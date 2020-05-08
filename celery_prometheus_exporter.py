@@ -376,6 +376,8 @@ def main():  # pragma: no cover
 
         q.daemon = True
         q.start()
+
+    e = None
     if opts.enable_events:
         e = EnableEventsThread(app=app)
         e.daemon = True
