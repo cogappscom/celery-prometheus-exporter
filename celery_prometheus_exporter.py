@@ -16,6 +16,7 @@ import os
 from celery.utils.objects import FallbackContext
 import amqp.exceptions
 import ast
+import redis
 
 __VERSION__ = (1, 2, 0, 'final', 0)
 
@@ -222,8 +223,9 @@ class EnableEventsThread(threading.Thread):
 class QueueLenghtMonitoringThread(threading.Thread):
     periodicity_seconds = 30
 
-    def __init__(self, app, queue_list):
+    def __init__(self, app, queue_list, redis_client):
         # type: (celery.Celery, [str]) -> None
+        self.redis_client = redis_client
         self.celery_app = app
         self.queue_list = queue_list
         self.connection = self.celery_app.connection_or_acquire()
@@ -236,8 +238,8 @@ class QueueLenghtMonitoringThread(threading.Thread):
     def measure_queues_length(self):
         for queue in self.queue_list:
             try:
-                length = self.connection.default_channel.queue_declare(queue=queue, passive=True).message_count
-            except (amqp.exceptions.ChannelError,) as e:
+                length = self.redis_client.llen(queue)
+            except ResponseError as e:
                 logging.warning("Queue Not Found: {}. Setting its value to zero. Error: {}".format(queue, str(e)))
                 length = 0
 
@@ -368,8 +370,9 @@ def main():  # pragma: no cover
             queue_list = opts.queue_list.split(',')
         else:
             queue_list = opts.queue_list
-
-        q = QueueLenghtMonitoringThread(app=app, queue_list=queue_list)
+        
+        redis_client = redis.Redis.from_url(opts.broker)
+        q = QueueLenghtMonitoringThread(app=app, queue_list=queue_list, redis_client=redis_client)
 
         q.daemon = True
         q.start()
